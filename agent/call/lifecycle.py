@@ -85,6 +85,33 @@ class CallLifecycleManager:
 
         logger.info(f"Call finalized: {self.record.call_id}, Duration: {self.record.duration_seconds}s, Outcome: {self.record.outcome}")
         
+        # Async sync to HubSpot CRM
+        try:
+            from agent.crm_integration import hubspot_client
+            email = self.record.caller_data.email
+            phone = self.record.caller_data.phone_number
+            name = self.record.caller_data.full_name or ""
+            fname = name.split()[0] if name else ""
+            lname = " ".join(name.split()[1:]) if len(name.split()) > 1 else ""
+
+            if email or phone:
+                contact = await hubspot_client.get_or_create_contact(
+                    email=email,
+                    phone=phone,
+                    first_name=fname,
+                    last_name=lname
+                )
+                if contact and "id" in contact:
+                    summary_text = self.record.summary or "Call completed."
+                    await hubspot_client.log_call_activity(
+                        contact_id=contact["id"],
+                        summary=summary_text,
+                        outcome=str(self.record.outcome)
+                    )
+                    logger.info(f"HubSpot: Synced call details to contact {contact['id']}")
+        except Exception as crm_err:
+            logger.error(f"HubSpot sync warning: {crm_err}")
+
         await self._save_to_supabase(upsert=True)
         return self.record
 

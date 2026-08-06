@@ -40,10 +40,13 @@ class Settings(BaseSettings):
     S3_BUCKET: str = "recordings"
 
     # Clinic Identity
-    CLINIC_NAME: str = "Soul Imaging Radiology Clinic"
+    CLINIC_NAME: str = "Apex Dental Care"
     AGENT_NAME: str = "Sarah"
     TIMEZONE: str = "Australia/Sydney"
     API_ALLOWED_ORIGINS: str = "*"
+
+    # HubSpot CRM Integration
+    HUBSPOT_ACCESS_TOKEN: Optional[str] = None
 
     # Admin fallback (Fix #2 — replaces hardcoded backdoor)
     ADMIN_FALLBACK_EMAIL: str = ""
