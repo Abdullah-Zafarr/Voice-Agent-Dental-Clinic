@@ -1,6 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- VAPI VOICE INTEGRATION ---
-    // Reads Vapi Public Key & Assistant ID from URL params or default
     const urlParams = new URLSearchParams(window.location.search);
     const VAPI_PUBLIC_KEY = urlParams.get('vapi_key') || window.VAPI_PUBLIC_KEY || '3517999b-48d3-492c-aac7-28605970f044';
     const VAPI_ASSISTANT_ID = urlParams.get('assistant_id') || window.VAPI_ASSISTANT_ID || '0de15885-971e-4610-8336-a99f08104d2a';
@@ -28,55 +27,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (agentDisplayName) agentDisplayName.textContent = "Sarah (Apex Dental AI)";
 
-    // Vapi Web SDK Instance
+    // Lazy load Vapi SDK instance
     function getVapiInstance() {
         if (vapi) return vapi;
         try {
-            const VapiSDK = window.Vapi || window.vapiSDK;
-            if (typeof VapiSDK === 'function') {
-                vapi = new VapiSDK(VAPI_PUBLIC_KEY);
-            } else if (VapiSDK && typeof VapiSDK.run === 'function') {
-                vapi = VapiSDK.run({ apiKey: VAPI_PUBLIC_KEY });
+            const VapiClass = window.Vapi || window.vapiSDK || (window.vapi && window.vapi.default);
+            if (typeof VapiClass === 'function') {
+                vapi = new VapiClass(VAPI_PUBLIC_KEY);
+            } else if (window.vapiSDK && typeof window.vapiSDK.run === 'function') {
+                vapi = window.vapiSDK.run({ apiKey: VAPI_PUBLIC_KEY });
             }
         } catch (e) {
             console.error("Vapi init error:", e);
         }
         return vapi;
-    }
-
-        // Vapi Event Listeners
-        vapi.on('call-start', () => {
-            isConnected = true;
-            updateStatus('CONNECTED', 'online');
-            startTimer();
-            setOrbState('speaking');
-        });
-
-        vapi.on('call-end', () => {
-            isConnected = false;
-            updateStatus('DISCONNECTED', 'offline');
-            stopTimer();
-            setOrbState('idle');
-        });
-
-        vapi.on('speech-start', () => {
-            setOrbState('speaking');
-        });
-
-        vapi.on('speech-end', () => {
-            setOrbState('idle');
-        });
-
-        vapi.on('message', (message) => {
-            if (message.type === 'transcript') {
-                appendTranscript(message.role === 'user' ? 'user' : 'bot', message.transcript);
-            }
-        });
-
-        vapi.on('error', (e) => {
-            console.error('Vapi Error:', e);
-            updateStatus('ERROR CONNECTING', 'error');
-        });
     }
 
     // --- BUTTON EVENT LISTENERS ---
@@ -103,7 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         updateStatus('CONNECTING...', 'connecting');
         try {
-            // Attach event listeners
+            // Attach event listeners safely once
             vapiInstance.on('call-start', () => {
                 isConnected = true;
                 updateStatus('CONNECTED', 'online');
@@ -140,8 +104,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function disconnectAgent() {
-        if (vapi && isConnected) {
-            vapi.stop();
+        const vapiInstance = getVapiInstance();
+        if (vapiInstance && isConnected) {
+            vapiInstance.stop();
         }
         isConnected = false;
         updateStatus('DISCONNECTED', 'offline');
@@ -150,9 +115,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function toggleMute() {
-        if (!vapi || !isConnected) return;
+        const vapiInstance = getVapiInstance();
+        if (!vapiInstance || !isConnected) return;
         isMuted = !isMuted;
-        vapi.setMuted(isMuted);
+        vapiInstance.setMuted(isMuted);
         if (muteBtn) {
             muteBtn.classList.toggle('active', isMuted);
         }
