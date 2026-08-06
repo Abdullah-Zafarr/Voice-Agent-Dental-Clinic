@@ -77,11 +77,13 @@ class HubSpotClient:
             logger.info(f"Mock CRM: Logged call activity for {contact_id}")
             return True
 
+        import time
         async with httpx.AsyncClient(timeout=10.0) as client:
             url = f"{HUBSPOT_API_BASE}/crm/v3/objects/notes"
             payload = {
                 "properties": {
-                    "hs_note_body": f"🎙️ Dental AI Voice Call Summary:\n{summary}\nOutcome: {outcome}"
+                    "hs_note_body": f"🎙️ Dental AI Voice Call Summary:\n{summary}\nOutcome: {outcome}",
+                    "hs_timestamp": str(int(time.time() * 1000))
                 },
                 "associations": [
                     {
