@@ -27,27 +27,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-HUBSPOT_ACCESS_TOKEN = os.getenv("HUBSPOT_ACCESS_TOKEN", "")
-
 # --- Helper: HubSpot Sync ---
 async def sync_to_hubspot(email: str = None, phone: str = None, name: str = None, summary: str = None):
-    if not HUBSPOT_ACCESS_TOKEN:
+    token = os.getenv("HUBSPOT_ACCESS_TOKEN", getattr(settings, "HUBSPOT_ACCESS_TOKEN", ""))
+    if not token:
         logger.info("Mock CRM: No HUBSPOT_ACCESS_TOKEN configured.")
         return {"status": "mocked"}
     
     try:
-        from agent.crm_integration import hubspot_client
+        from agent.crm_integration import HubSpotClient
+        client = HubSpotClient(api_key=token)
         fname = name.split()[0] if name else ""
         lname = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else ""
         
-        contact = await hubspot_client.get_or_create_contact(
+        contact = await client.get_or_create_contact(
             email=email,
             phone=phone,
             first_name=fname,
             last_name=lname
         )
         if contact and "id" in contact and summary:
-            await hubspot_client.log_call_activity(contact["id"], summary)
+            await client.log_call_activity(contact["id"], summary)
         return contact
     except Exception as e:
         logger.error(f"HubSpot sync error: {e}")

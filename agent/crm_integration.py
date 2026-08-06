@@ -28,15 +28,17 @@ class HubSpotClient:
             return {"id": "mock_hubspot_123", "status": "mocked", "properties": {"email": email, "firstname": first_name}}
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # 1. Search existing contact by email
-            if email:
+            # 1. Search existing contact by email or phone
+            if email or phone:
                 search_url = f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts/search"
+                filter_prop = "email" if email else "phone"
+                filter_val = email or phone
                 search_payload = {
                     "filterGroups": [{
                         "filters": [{
-                            "propertyName": "email",
+                            "propertyName": filter_prop,
                             "operator": "EQ",
-                            "value": email
+                            "value": filter_val
                         }]
                     }]
                 }
@@ -49,15 +51,17 @@ class HubSpotClient:
 
             # 2. Create new contact if not found
             create_url = f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts"
-            payload = {
-                "properties": {
-                    "email": email or "",
-                    "phone": phone or "",
-                    "firstname": first_name or "",
-                    "lastname": last_name or "",
-                    "hs_lead_status": "NEW"
-                }
+            props = {
+                "firstname": first_name or "Patient",
+                "lastname": last_name or "Lead",
+                "hs_lead_status": "NEW"
             }
+            if email:
+                props["email"] = email
+            if phone:
+                props["phone"] = phone
+
+            payload = {"properties": props}
             res = await client.post(create_url, headers=self.headers, json=payload)
             if res.status_code in (200, 201):
                 contact = res.json()
