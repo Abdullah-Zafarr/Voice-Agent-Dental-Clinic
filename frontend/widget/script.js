@@ -30,18 +30,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Inject Vapi Web SDK script dynamically
     const script = document.createElement('script');
-    script.src = "https://cdn.jsdelivr.net/gh/VapiAI/html-script-tag@latest/dist/assets/index.js";
-    script.defer = true;
+    script.src = "https://unpkg.com/@vapi-ai/web/dist/vapi.js";
     script.onload = () => {
         initVapi();
+    };
+    script.onerror = () => {
+        // Fallback to CDN UMD bundle
+        const fallbackScript = document.createElement('script');
+        fallbackScript.src = "https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/dist/vapi.js";
+        fallbackScript.onload = () => initVapi();
+        document.head.appendChild(fallbackScript);
     };
     document.head.appendChild(script);
 
     function initVapi() {
-        if (!window.vapiSDK) return;
-        vapi = window.vapiSDK.run({
-            apiKey: VAPI_PUBLIC_KEY,
-        });
+        try {
+            const VapiClass = window.Vapi || window.vapiSDK || (window.vapi && window.vapi.default);
+            if (typeof VapiClass === 'function') {
+                vapi = new VapiClass(VAPI_PUBLIC_KEY);
+            } else if (window.vapiSDK && typeof window.vapiSDK.run === 'function') {
+                vapi = window.vapiSDK.run({ apiKey: VAPI_PUBLIC_KEY });
+            }
+        } catch (err) {
+            console.error("Vapi initialization error:", err);
+        }
+    }
 
         // Vapi Event Listeners
         vapi.on('call-start', () => {
