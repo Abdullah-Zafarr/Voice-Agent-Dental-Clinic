@@ -60,36 +60,34 @@ document.addEventListener('DOMContentLoaded', () => {
                     vapiInstance.on('speech-start', () => setOrbState('speaking'));
                     vapiInstance.on('speech-end', () => setOrbState('idle'));
 
-                    let lastSpeakerRole = null;
-                    let lastSpeechElement = null;
+                    const activeBubbles = { user: null, bot: null };
 
                     vapiInstance.on('message', (message) => {
                         if (message.type === 'transcript') {
                             const role = message.role === 'user' ? 'user' : 'bot';
-                            const text = message.transcript || '';
-                            const transcriptType = message.transcriptType; // 'partial' or 'final'
+                            const text = (message.transcript || '').trim();
+                            const isFinal = message.transcriptType === 'final';
 
-                            if (!text.trim()) return;
+                            if (!text) return;
 
                             if (!transcriptFeed) return;
                             const placeholder = transcriptFeed.querySelector('.transcript-placeholder');
                             if (placeholder) placeholder.remove();
 
-                            // Update existing active bubble if transcript is partial or continuous from same speaker
-                            if (lastSpeechElement && lastSpeakerRole === role && transcriptType !== 'final') {
-                                lastSpeechElement.textContent = text;
+                            // If we have an active partial bubble for this role, update its text
+                            if (activeBubbles[role]) {
+                                activeBubbles[role].textContent = text;
                             } else {
                                 const msgDiv = document.createElement('div');
                                 msgDiv.className = `transcript-item ${role}`;
                                 msgDiv.textContent = text;
                                 transcriptFeed.appendChild(msgDiv);
-                                lastSpeechElement = msgDiv;
-                                lastSpeakerRole = role;
+                                activeBubbles[role] = msgDiv;
                             }
 
-                            if (transcriptType === 'final') {
-                                lastSpeechElement = null;
-                                lastSpeakerRole = null;
+                            // On final, release the active bubble so next utterance starts fresh
+                            if (isFinal) {
+                                activeBubbles[role] = null;
                             }
 
                             transcriptFeed.scrollTop = transcriptFeed.scrollHeight;
