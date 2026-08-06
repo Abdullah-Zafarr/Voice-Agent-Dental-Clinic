@@ -162,9 +162,10 @@ async def handle_vapi_webhook(request: Request):
             await sync_to_hubspot(email=email, phone=phone, name=name, summary=summary)
             return {"status": "synced"}
 
-        return {"status": "ignored"}
+        return {"status": "ignored", "debug_body": body}
     except Exception as err:
         logger.error(f"Webhook error: {err}")
+
         return {"status": "error", "message": str(err)}
 
 # --- Dental Tools Execution Logic ---
