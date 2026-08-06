@@ -91,3 +91,4 @@ Saif_updated/
 
 # Allow frontend admin source libs
 !frontend/admin/lib/
+.vercel

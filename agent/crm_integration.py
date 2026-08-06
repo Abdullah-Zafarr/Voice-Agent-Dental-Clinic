@@ -1,98 +1,99 @@
-"""
-crm_integration.py — Official HubSpot CRM integration client for Dental Voice Agent.
-Handles Contacts search, Contact creation/update, and Engagement/Note logging.
-"""
+"""HubSpot CRM integration for the Dental Voice Agent."""
+
 import logging
+import time
+from typing import Any, Dict, Optional
+
 import httpx
-from typing import Optional, Dict, Any
+
 from agent.config import settings
 
 logger = logging.getLogger("hubspot-crm")
-
 HUBSPOT_API_BASE = "https://api.hubapi.com"
 
+
 class HubSpotClient:
-    """Client for interacting with HubSpot CRM v3 REST API."""
+    """Client for HubSpot contacts and contact notes."""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or getattr(settings, "HUBSPOT_ACCESS_TOKEN", "")
+        self.api_key = api_key or settings.HUBSPOT_ACCESS_TOKEN or ""
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
+    async def _find_contact(self, client: httpx.AsyncClient, property_name: str, value: str) -> Optional[Dict[str, Any]]:
+        response = await client.post(
+            f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts/search",
+            headers=self.headers,
+            json={"filterGroups": [{"filters": [{"propertyName": property_name, "operator": "EQ", "value": value}]}], "limit": 1},
+        )
+        response.raise_for_status()
+        results = response.json().get("results", [])
+        return results[0] if results else None
+
     async def get_or_create_contact(self, email: Optional[str] = None, phone: Optional[str] = None, first_name: Optional[str] = None, last_name: Optional[str] = None) -> Dict[str, Any]:
-        """Lookup contact by email or phone; create if non-existent."""
+        """Find a contact, update supplied details, or create one."""
         if not self.api_key:
-            logger.warning("HUBSPOT_ACCESS_TOKEN not set. Running in Mock CRM mode.")
-            return {"id": "mock_hubspot_123", "status": "mocked", "properties": {"email": email, "firstname": first_name}}
+            raise RuntimeError("HUBSPOT_ACCESS_TOKEN is not configured")
+        if not email and not phone:
+            raise ValueError("An email address or phone number is required to save a contact")
+
+        properties: Dict[str, str] = {}
+        if email:
+            properties["email"] = email.strip().lower()
+        if phone:
+            properties["phone"] = phone
+        if first_name:
+            properties["firstname"] = first_name.strip()
+        if last_name:
+            properties["lastname"] = last_name.strip()
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # 1. Search existing contact by email or phone
-            if email or phone:
-                search_url = f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts/search"
-                filter_prop = "email" if email else "phone"
-                filter_val = email or phone
-                search_payload = {
-                    "filterGroups": [{
-                        "filters": [{
-                            "propertyName": filter_prop,
-                            "operator": "EQ",
-                            "value": filter_val
-                        }]
-                    }]
-                }
-                res = await client.post(search_url, headers=self.headers, json=search_payload)
-                if res.status_code == 200:
-                    results = res.json().get("results", [])
-                    if results:
-                        logger.info(f"HubSpot: Found existing contact {results[0]['id']}")
-                        return results[0]
+            contact = await self._find_contact(client, "email", properties["email"]) if email else None
+            if contact is None and phone:
+                contact = await self._find_contact(client, "phone", phone)
+            if contact:
+                response = await client.patch(
+                    f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts/{contact['id']}",
+                    headers=self.headers,
+                    json={"properties": properties},
+                )
+                response.raise_for_status()
+                logger.info("HubSpot: updated contact %s", contact["id"])
+                return response.json()
 
-            # 2. Create new contact if not found
-            create_url = f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts"
-            props = {
-                "firstname": first_name or "Patient",
-                "lastname": last_name or "Lead",
-                "hs_lead_status": "NEW"
-            }
-            if email:
-                props["email"] = email
-            if phone:
-                props["phone"] = phone
+            properties["hs_lead_status"] = "NEW"
+            response = await client.post(
+                f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts",
+                headers=self.headers,
+                json={"properties": properties},
+            )
+            response.raise_for_status()
+            contact = response.json()
+            logger.info("HubSpot: created contact %s", contact["id"])
+            return contact
 
-            payload = {"properties": props}
-            res = await client.post(create_url, headers=self.headers, json=payload)
-            if res.status_code in (200, 201):
-                contact = res.json()
-                logger.info(f"HubSpot: Created contact {contact['id']}")
-                return contact
-            else:
-                logger.error(f"HubSpot create failed ({res.status_code}): {res.text}")
-                return {"id": "fallback_123", "error": res.text}
-
-    async def log_call_activity(self, contact_id: str, summary: str, outcome: str = "COMPLETED") -> bool:
-        """Log call notes / engagement to patient's HubSpot record."""
-        if not self.api_key or "mock" in contact_id:
-            logger.info(f"Mock CRM: Logged call activity for {contact_id}")
-            return True
-
-        import time
+    async def log_call_activity(self, contact_id: str, summary: str, outcome: str = "COMPLETED") -> Dict[str, Any]:
+        """Create a note associated with a contact and return HubSpot's response."""
+        if not self.api_key:
+            raise RuntimeError("HUBSPOT_ACCESS_TOKEN is not configured")
         async with httpx.AsyncClient(timeout=10.0) as client:
-            url = f"{HUBSPOT_API_BASE}/crm/v3/objects/notes"
-            payload = {
-                "properties": {
-                    "hs_note_body": f"🎙️ Dental AI Voice Call Summary:\n{summary}\nOutcome: {outcome}",
-                    "hs_timestamp": str(int(time.time() * 1000))
+            response = await client.post(
+                f"{HUBSPOT_API_BASE}/crm/v3/objects/notes",
+                headers=self.headers,
+                json={
+                    "properties": {
+                        "hs_note_body": f"Dental AI Voice Agent\n\n{summary}\n\nOutcome: {outcome}",
+                        "hs_timestamp": str(int(time.time() * 1000)),
+                    },
+                    "associations": [{"to": {"id": contact_id}, "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 202}]}],
                 },
-                "associations": [
-                    {
-                        "to": {"id": contact_id},
-                        "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 202}] # Note to Contact
-                    }
-                ]
-            }
-            res = await client.post(url, headers=self.headers, json=payload)
-            return res.status_code in (200, 201)
+            )
+            response.raise_for_status()
+            note = response.json()
+            logger.info("HubSpot: created note %s for contact %s", note.get("id"), contact_id)
+            return note
+
 
 hubspot_client = HubSpotClient()

@@ -1,228 +1,189 @@
-"""
-api/index.py — Vercel Serverless entrypoint for Vapi Webhooks + Dental AI tools.
-Lightweight (Under 15MB), zero card required, instant 24/7 serverless execution.
-"""
-import os
+"""Vercel serverless endpoint for the Vapi dental assistant tools."""
+
 import json
 import logging
-from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, Request, HTTPException
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+
+from agent.config import settings
+from agent.crm_integration import HubSpotClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vercel-vapi-webhook")
 
-app = FastAPI(
-    title="Apex Dental AI — Vapi Webhook API",
-    description="Serverless webhook handler for Vapi voice agent tools & HubSpot integration.",
-    version="2.0.0"
-)
+app = FastAPI(title="Apex Dental Vapi Webhook API", version="3.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-try:
-    from agent.config import settings
-except Exception:
-    settings = None
-
-# --- Helper: HubSpot Sync ---
-async def sync_to_hubspot(email: str = None, phone: str = None, name: str = None, summary: str = None):
-    token = os.getenv("HUBSPOT_ACCESS_TOKEN", getattr(settings, "HUBSPOT_ACCESS_TOKEN", "") if settings else "")
-    if not token:
-        logger.info("Mock CRM: No HUBSPOT_ACCESS_TOKEN configured.")
-        return {"status": "mocked"}
-    
-    try:
-        from agent.crm_integration import HubSpotClient
-        client = HubSpotClient(api_key=token)
-        fname = name.split()[0] if name else ""
-        lname = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else ""
-        
-        contact = await client.get_or_create_contact(
-            email=email,
-            phone=phone,
-            first_name=fname,
-            last_name=lname
-        )
-        if contact and "id" in contact and summary:
-            await client.log_call_activity(contact["id"], summary)
-        return contact
-    except Exception as e:
-        logger.error(f"HubSpot sync error: {e}")
+def phone_clean(value: Any) -> Optional[str]:
+    if not value:
         return None
+    cleaned = "".join(character for character in str(value).strip() if character.isdigit() or character == "+")
+    return cleaned or None
 
-# --- Health Check ---
+
+def split_name(name: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    parts = (name or "").strip().split()
+    return (parts[0], " ".join(parts[1:]) or None) if parts else (None, None)
+
+
+async def sync_to_hubspot(*, email: Optional[str], phone: Optional[str], name: Optional[str], summary: str, outcome: str = "COMPLETED") -> Dict[str, Any]:
+    """Upsert a contact and attach a note. Never claim a failed write succeeded."""
+    if not settings.HUBSPOT_ACCESS_TOKEN:
+        return {"success": False, "code": "crm_not_configured", "message": "HubSpot is not configured on the server."}
+    if not email and not phone:
+        return {"success": False, "code": "missing_contact_identifier", "message": "Please collect the caller's email address or phone number before saving."}
+    first_name, last_name = split_name(name)
+    try:
+        client = HubSpotClient(api_key=settings.HUBSPOT_ACCESS_TOKEN)
+        contact = await client.get_or_create_contact(email=email, phone=phone_clean(phone), first_name=first_name, last_name=last_name)
+        note = await client.log_call_activity(contact["id"], summary, outcome=outcome)
+        return {"success": True, "contact_id": contact["id"], "note_id": note.get("id"), "message": "Caller details were saved to HubSpot."}
+    except Exception as error:
+        logger.exception("HubSpot sync failed")
+        return {"success": False, "code": "crm_sync_failed", "message": "HubSpot could not save the caller details. Please try again later.", "detail": str(error)}
+
+
+def clinic_today() -> date:
+    try:
+        return datetime.now(ZoneInfo(settings.TIMEZONE)).date()
+    except Exception:
+        return datetime.now().date()
+
+
+def parse_requested_date(value: Optional[str], base_date: date) -> date:
+    text = (value or "").strip().lower()
+    if not text or text in {"today", "now"}:
+        return base_date
+    if text == "tomorrow":
+        return base_date + timedelta(days=1)
+    if text in {"day after tomorrow", "next day"}:
+        return base_date + timedelta(days=2)
+    try:
+        return date.fromisoformat(text.split("T", 1)[0])
+    except ValueError:
+        pass
+    weekdays = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+    for day_name, weekday in weekdays.items():
+        if day_name in text:
+            days_ahead = (weekday - base_date.weekday()) % 7
+            if text.startswith("next ") or days_ahead == 0:
+                days_ahead += 7
+            return base_date + timedelta(days=days_ahead)
+    raise ValueError("Use a weekday, today, tomorrow, or a YYYY-MM-DD date.")
+
+
+def prototype_slots(date_from: Optional[str], date_to: Optional[str]) -> List[Dict[str, str]]:
+    """Return transparent prototype slots until a real calendar is connected."""
+    today = clinic_today()
+    start = parse_requested_date(date_from, today)
+    end = parse_requested_date(date_to, today) if date_to else start + timedelta(days=6)
+    if end < start:
+        raise ValueError("date_to cannot be earlier than date_from.")
+    end = min(end, start + timedelta(days=13))
+    slots: List[Dict[str, str]] = []
+    current = max(start, today)
+    while current <= end:
+        if current.weekday() < 5:
+            for clock in ("09:00 AM", "10:30 AM", "01:30 PM", "03:00 PM"):
+                slots.append({"date": current.isoformat(), "day": current.strftime("%A"), "time": clock, "slot_time": f"{current.isoformat()} {clock}"})
+        current += timedelta(days=1)
+    return slots
+
+
+def infer_api_request_tool(payload: Dict[str, Any]) -> Optional[str]:
+    """apiRequest tools post their body directly, without the tool name."""
+    explicit_name = payload.get("tool_name") or payload.get("toolName")
+    if explicit_name:
+        return str(explicit_name)
+    if "slot_time" in payload:
+        return "book_appointment"
+    if "service_name" in payload:
+        return "get_dental_pricing"
+    if any(key in payload for key in ("full_name", "patient_name", "phone_number", "email")):
+        return "save_caller_data"
+    if "date_from" in payload or "date_to" in payload:
+        return "check_availability"
+    return None
+
+
+async def execute_dental_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    patient_name = args.get("patient_name") or args.get("full_name") or args.get("name")
+    patient_email = args.get("email")
+    patient_phone = phone_clean(args.get("phone_number") or args.get("phone"))
+    if name == "check_availability":
+        try:
+            slots = prototype_slots(args.get("date_from"), args.get("date_to"))
+        except ValueError as error:
+            return {"success": False, "code": "invalid_date", "message": str(error)}
+        return {
+            "success": True,
+            "source": "prototype_schedule",
+            "available": bool(slots),
+            "message": "These are prototype office-hour slots. A connected calendar is required for live availability." if slots else "There are no prototype slots in the requested range. Offer a callback.",
+            "slots": slots,
+        }
+    if name == "save_caller_data":
+        return await sync_to_hubspot(email=patient_email, phone=patient_phone, name=patient_name, summary="Caller details captured by the AI receptionist.", outcome="CONTACT_CAPTURED")
+    if name == "book_appointment":
+        if not args.get("slot_time"):
+            return {"success": False, "code": "missing_slot", "message": "A requested appointment slot is required."}
+        crm_result = await sync_to_hubspot(
+            email=patient_email,
+            phone=patient_phone,
+            name=patient_name,
+            summary=f"Appointment request: {args.get('service_type') or 'Dental consultation'} at {args['slot_time']}. This is a prototype request and needs office confirmation.",
+            outcome="APPOINTMENT_REQUESTED",
+        )
+        if not crm_result["success"]:
+            return crm_result
+        return {**crm_result, "appointment_status": "pending_office_confirmation", "message": "The appointment request was saved to HubSpot for office confirmation."}
+    if name == "get_dental_pricing":
+        service = str(args.get("service_name") or "").lower()
+        prices = {"cleaning": "Standard cleaning is $150 to $220.", "whitening": "Professional in-chair whitening is $350.", "filling": "Composite fillings range from $180 to $350.", "crown": "Porcelain crowns range from $900 to $1,500.", "checkup": "A general checkup and X-ray is $199 for new patients."}
+        message = next((value for key, value in prices.items() if key in service), "Checkups start at $199, cleanings at $150, and fillings at $180.")
+        return {"success": True, "message": message}
+    return {"success": False, "code": "unknown_tool", "message": f"Unsupported tool: {name}"}
+
+
 @app.get("/api/health")
 @app.get("/health")
-def health_check():
+def health_check() -> Dict[str, str]:
     return {"status": "online", "service": "Apex Dental Vapi Webhook Serverless"}
 
-# --- Vapi Webhook Handler ---
+
 @app.post("/api/vapi/webhook")
-async def handle_vapi_webhook(request: Request):
-    """
-    Primary endpoint called by Vapi whenever the voice agent triggers a tool call
-    or finishes an end-of-call report.
-    """
+async def handle_vapi_webhook(request: Request) -> Dict[str, Any]:
+    """Handle Vapi server tool calls and direct apiRequest tool requests."""
     try:
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-
-        raw_msg = body.get("message")
-        message = raw_msg if isinstance(raw_msg, dict) else body
-        msg_type = message.get("type") or body.get("type") or body.get("role") or ""
-
-        logger.info(f"Received Vapi Webhook event: {msg_type}")
-
-        # 1. Handle Function / Tool Calls (Any shape from Vapi)
-        single_tc = body.get("toolCall") or message.get("toolCall")
-        tool_calls = (
-            message.get("toolCalls") or 
-            message.get("toolWithToolCallList") or 
-            message.get("toolCallList") or 
-            body.get("toolCalls") or 
-            body.get("toolWithToolCallList") or 
-            body.get("toolCallList") or 
-            ([single_tc] if isinstance(single_tc, dict) else [])
-        )
+        payload = await request.json()
+    except Exception:
+        return {"success": False, "code": "invalid_json", "message": "Expected a JSON request body."}
+    message = payload.get("message") if isinstance(payload.get("message"), dict) else payload
+    tool_calls = message.get("toolCallList") or message.get("toolCalls") or payload.get("toolCalls") or []
+    if isinstance(tool_calls, dict):
+        tool_calls = [tool_calls]
+    if tool_calls:
         results = []
-
-        if tool_calls:
-            for tc in tool_calls:
-                tool_call = tc.get("toolCall", tc)
-                call_id = tool_call.get("id") or tc.get("id")
-                func = tool_call.get("function", tool_call)
-                name = func.get("name")
-                args = func.get("arguments", {})
-
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {}
-
-                logger.info(f"Executing tool: {name} with args {args}")
-                output = await execute_dental_tool(name, args)
-
-                results.append({
-                    "toolCallId": call_id,
-                    "result": output
-                })
-            return {"results": results}
-
-        # Direct function call fallback format
-        func = message.get("functionCall") or message.get("function") or body.get("functionCall") or body.get("function") or {}
-        name = func.get("name") or message.get("name") or body.get("name")
-        args = func.get("arguments") or message.get("parameters") or body.get("parameters") or {}
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except Exception:
-                args = {}
-
-        # Fallback for Vapi 'apiRequest' tool payloads where arguments are sent directly in the body
-        if not name and not tool_calls:
-            if "date_from" in body:
-                name = "check_availability"
-                args = body
-            elif "slot_time" in body:
-                name = "book_appointment"
-                args = body
-            elif "full_name" in body or ("email" in body and "patient_name" not in body and "slot_time" not in body):
-                name = "save_caller_data"
-                args = body
-            elif "service_name" in body:
-                name = "get_dental_pricing"
-                args = body
-
-
-        if name:
-            output = await execute_dental_tool(name, args)
-            return {"result": output}
-
-        # 2. Handle End of Call Report (Auto Sync to HubSpot CRM)
-        elif msg_type == "end-of-call-report":
-            summary = message.get("summary", "")
-            call = message.get("call", {})
-            customer = call.get("customer", {})
-            phone = customer.get("number")
-            email = customer.get("email")
-            name = customer.get("name")
-
-            logger.info(f"End of call report received. Syncing to HubSpot CRM for {email or phone or 'Guest'}...")
-            await sync_to_hubspot(email=email, phone=phone, name=name, summary=summary)
-            return {"status": "synced"}
-
-        return {"status": "ignored", "debug_body": body}
-    except Exception as err:
-        logger.error(f"Webhook error: {err}")
-
-        return {"status": "error", "message": str(err)}
-
-# --- Dental Tools Execution Logic ---
-async def execute_dental_tool(name: str, args: Dict[str, Any]) -> str:
-    # Always pull any available patient identifiers from tool arguments and sync immediately
-    p_name = args.get("patient_name") or args.get("full_name") or args.get("name")
-    p_email = args.get("email")
-    p_phone = args.get("phone_number") or args.get("phone")
-
-    if p_name or p_email or p_phone:
-        logger.info(f"Tool {name}: Auto-syncing patient info ({p_name}, {p_email}, {p_phone}) to HubSpot CRM...")
-        await sync_to_hubspot(email=p_email, phone=phone_clean(p_phone), name=p_name, summary=f"Interacted with AI Tool: {name} (Args: {json.dumps(args)})")
-
-    if name == "check_availability":
-        date_from = args.get("date_from", "upcoming days")
-        return (
-            f"Available slots for Apex Dental Care ({date_from}): "
-            "Monday at 10:00 AM, Tuesday at 2:15 PM, and Thursday at 11:30 AM. "
-            "Which time works best for you?"
-        )
-
-    elif name == "book_appointment":
-        patient_name = p_name or "Patient"
-        slot_time = args.get("slot_time", "the requested time")
-        service = args.get("service_type", "Dental Consultation")
-
-        # Sync lead immediately to HubSpot CRM with explicit booking note
-        await sync_to_hubspot(email=p_email, phone=phone_clean(p_phone), name=patient_name, summary=f"Booked {service} for {slot_time}")
-
-        return (
-            f"Appointment successfully confirmed for {patient_name}! "
-            f"Service: {service} at {slot_time}. "
-            "A confirmation details note has been logged in our system."
-        )
-
-    elif name == "save_caller_data":
-        await sync_to_hubspot(email=p_email, phone=phone_clean(p_phone), name=p_name, summary="Updated patient profile details via AI Receptionist.")
-        return "Saved patient contact details successfully."
-
-    elif name == "get_dental_pricing":
-        service = args.get("service_name", "").lower()
-        pricing_guide = {
-            "cleaning": "Standard cleaning is $150 to $220. Covered by most private health funds.",
-            "whitening": "Professional teeth whitening is $350 for in-chair treatment.",
-            "filling": "Composite fillings range between $180 and $350 depending on tooth location.",
-            "crown": "Porcelain crowns range from $900 to $1,500.",
-            "checkup": "General checkup and X-ray special is $199 for new patients."
-        }
-        for key, text in pricing_guide.items():
-            if key in service:
-                return text
-        return "Checkups start at $199, cleanings at $150, and fillings at $180. We accept all major health insurance providers."
-
-    return f"Tool {name} executed successfully."
-
-def phone_clean(val: Any) -> Optional[str]:
-    if not val:
-        return None
-    s = str(val).replace(" ", "").replace("-", "")
-    return s if s else None
+        for item in tool_calls:
+            call = item.get("toolCall", item)
+            function = call.get("function", call)
+            arguments = function.get("arguments", call.get("arguments", {}))
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments)
+            name = function.get("name") or call.get("name")
+            results.append({"toolCallId": call.get("id") or item.get("id"), "result": await execute_dental_tool(name, arguments or {})})
+        return {"results": results}
+    if message.get("type") == "end-of-call-report":
+        call = message.get("call") or {}
+        customer = call.get("customer") or {}
+        result = await sync_to_hubspot(email=customer.get("email"), phone=customer.get("number"), name=customer.get("name"), summary=message.get("summary") or "Vapi call completed.", outcome="CALL_COMPLETED")
+        return {"status": "synced" if result["success"] else "failed", "crm": result}
+    name = infer_api_request_tool(payload)
+    if not name:
+        return {"success": False, "code": "unknown_request", "message": "Could not determine which Vapi tool made this request."}
+    return await execute_dental_tool(name, payload)
