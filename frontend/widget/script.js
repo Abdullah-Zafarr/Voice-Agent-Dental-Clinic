@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const activeBubbles = { user: null, bot: null };
     const renderedMessages = new Set();
-    let assistantTurnBubble = null;
+    const renderedAssistantTurns = new Set();
 
     if (window.lucide) window.lucide.createIcons();
     if (agentDisplayName) agentDisplayName.textContent = 'Sarah (Apex Dental AI)';
@@ -73,7 +73,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!text) return;
 
         const normalizedRole = normalizeRole(role);
-        if (normalizedRole === 'user' && text) assistantTurnBubble = null;
         const stableKey = messageId || `${normalizedRole}:${text}`;
 
         if (isFinal && renderedMessages.has(stableKey)) return;
@@ -109,11 +108,10 @@ document.addEventListener('DOMContentLoaded', () => {
         ).trim();
         if (!text) return;
 
-        if (!assistantTurnBubble) {
-            assistantTurnBubble = createBubble('bot', text);
-        } else {
-            assistantTurnBubble.textContent = text;
-        }
+        const turnKey = assistantEntry.id || assistantEntry.messageId || text;
+        if (renderedAssistantTurns.has(turnKey)) return;
+        renderedAssistantTurns.add(turnKey);
+        createBubble('bot', text);
         scrollTranscriptToBottom();
     }
 
