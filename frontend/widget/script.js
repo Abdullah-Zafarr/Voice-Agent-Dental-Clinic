@@ -94,7 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CORE FUNCTIONS ---
     async function connectToAgent() {
-        if (!window.vapiSDK) {
+        if (!window.vapiSDK && !window.Vapi && !window.vapi) {
             alert('Loading Vapi Voice SDK... please try again in 2 seconds.');
             return;
         }
@@ -103,8 +103,9 @@ document.addEventListener('DOMContentLoaded', () => {
         
         try {
             const instance = initVapi();
-            if (!instance) {
-                // Trigger click on the vapiSDK floating button or call start
+            if (instance && typeof instance.start === 'function') {
+                await instance.start(VAPI_ASSISTANT_ID);
+            } else {
                 const vapiBtn = document.querySelector('.vapi-btn') || document.querySelector('[id*="vapi"]');
                 if (vapiBtn) {
                     vapiBtn.click();
