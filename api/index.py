@@ -129,6 +129,22 @@ async def handle_vapi_webhook(request: Request):
             except Exception:
                 args = {}
 
+        # Fallback for Vapi 'apiRequest' tool payloads where arguments are sent directly in the body
+        if not name and not tool_calls:
+            if "date_from" in body:
+                name = "check_availability"
+                args = body
+            elif "slot_time" in body:
+                name = "book_appointment"
+                args = body
+            elif "full_name" in body or ("email" in body and "patient_name" not in body and "slot_time" not in body):
+                name = "save_caller_data"
+                args = body
+            elif "service_name" in body:
+                name = "get_dental_pricing"
+                args = body
+
+
         if name:
             output = await execute_dental_tool(name, args)
             return {"result": output}
