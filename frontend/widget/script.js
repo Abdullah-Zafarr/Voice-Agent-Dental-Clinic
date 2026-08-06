@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const VAPI_PUBLIC_KEY = urlParams.get('vapi_key') || window.VAPI_PUBLIC_KEY || '3517999b-48d3-492c-aac7-28605970f044';
     const VAPI_ASSISTANT_ID = urlParams.get('assistant_id') || window.VAPI_ASSISTANT_ID || '0de15885-971e-4610-8336-a99f08104d2a';
 
-    let vapi = null;
+    let vapiInstance = null;
     let isConnected = false;
     let isMuted = false;
     let timerInterval = null;
@@ -27,20 +27,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (agentDisplayName) agentDisplayName.textContent = "Sarah (Apex Dental AI)";
 
-    // Lazy load Vapi SDK instance
-    function getVapiInstance() {
-        if (vapi) return vapi;
-        try {
-            const VapiSDK = window.vapiSDK || window.Vapi || (window.vapi && window.vapi.default) || window.vapi;
-            if (VapiSDK && typeof VapiSDK.run === 'function') {
-                vapi = VapiSDK.run({ apiKey: VAPI_PUBLIC_KEY });
-            } else if (typeof VapiSDK === 'function') {
-                vapi = new VapiSDK(VAPI_PUBLIC_KEY);
+    // Initialize Vapi SDK
+    function initVapi() {
+        if (vapiInstance) return vapiInstance;
+
+        if (window.vapiSDK && typeof window.vapiSDK.run === 'function') {
+            try {
+                // vapiSDK.run creates and manages the underlying Vapi call instance
+                vapiInstance = window.vapiSDK.run({
+                    apiKey: VAPI_PUBLIC_KEY,
+                    assistant: VAPI_ASSISTANT_ID,
+                    config: {
+                        position: "bottom-right"
+                    }
+                });
+
+                if (vapiInstance) {
+                    vapiInstance.on('call-start', () => {
+                        isConnected = true;
+                        updateStatus('CONNECTED', 'online');
+                        startTimer();
+                        setOrbState('speaking');
+                    });
+
+                    vapiInstance.on('call-end', () => {
+                        isConnected = false;
+                        updateStatus('DISCONNECTED', 'offline');
+                        stopTimer();
+                        setOrbState('idle');
+                    });
+
+                    vapiInstance.on('speech-start', () => setOrbState('speaking'));
+                    vapiInstance.on('speech-end', () => setOrbState('idle'));
+
+                    vapiInstance.on('message', (message) => {
+                        if (message.type === 'transcript') {
+                            appendTranscript(message.role === 'user' ? 'user' : 'bot', message.transcript);
+                        }
+                    });
+
+                    vapiInstance.on('error', (e) => {
+                        console.error('Vapi Call Error:', e);
+                        updateStatus('READY TO CONNECT', 'idle');
+                    });
+                }
+            } catch (err) {
+                console.error("vapiSDK.run error:", err);
             }
-        } catch (e) {
-            console.error("Vapi init error:", e);
         }
-        return vapi;
+        return vapiInstance;
     }
 
     // --- BUTTON EVENT LISTENERS ---
@@ -59,44 +94,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CORE FUNCTIONS ---
     async function connectToAgent() {
-        const vapiInstance = getVapiInstance();
-        if (!vapiInstance) {
-            alert('Initializing Vapi Voice SDK... please try again in 2 seconds.');
+        if (!window.vapiSDK) {
+            alert('Loading Vapi Voice SDK... please try again in 2 seconds.');
             return;
         }
 
         updateStatus('CONNECTING...', 'connecting');
+        
         try {
-            // Attach event listeners safely once
-            vapiInstance.on('call-start', () => {
-                isConnected = true;
-                updateStatus('CONNECTED', 'online');
-                startTimer();
-                setOrbState('speaking');
-            });
-
-            vapiInstance.on('call-end', () => {
-                isConnected = false;
-                updateStatus('DISCONNECTED', 'offline');
-                stopTimer();
-                setOrbState('idle');
-            });
-
-            vapiInstance.on('speech-start', () => setOrbState('speaking'));
-            vapiInstance.on('speech-end', () => setOrbState('idle'));
-
-            vapiInstance.on('message', (message) => {
-                if (message.type === 'transcript') {
-                    appendTranscript(message.role === 'user' ? 'user' : 'bot', message.transcript);
+            const instance = initVapi();
+            if (!instance) {
+                // Trigger click on the vapiSDK floating button or call start
+                const vapiBtn = document.querySelector('.vapi-btn') || document.querySelector('[id*="vapi"]');
+                if (vapiBtn) {
+                    vapiBtn.click();
+                } else {
+                    updateStatus('READY TO CONNECT', 'idle');
                 }
-            });
-
-            vapiInstance.on('error', (e) => {
-                console.error('Vapi Error:', e);
-                updateStatus('READY TO CONNECT', 'idle');
-            });
-
-            await vapiInstance.start(VAPI_ASSISTANT_ID);
+            }
         } catch (err) {
             console.error('Failed to start call:', err);
             updateStatus('READY TO CONNECT', 'idle');
@@ -104,9 +119,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function disconnectAgent() {
-        const vapiInstance = getVapiInstance();
         if (vapiInstance && isConnected) {
             vapiInstance.stop();
+        }
+        const vapiBtn = document.querySelector('.vapi-btn');
+        if (vapiBtn && isConnected) {
+            vapiBtn.click();
         }
         isConnected = false;
         updateStatus('DISCONNECTED', 'offline');
@@ -115,7 +133,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function toggleMute() {
-        const vapiInstance = getVapiInstance();
         if (!vapiInstance || !isConnected) return;
         isMuted = !isMuted;
         vapiInstance.setMuted(isMuted);
