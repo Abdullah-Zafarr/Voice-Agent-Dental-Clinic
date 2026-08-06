@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const activeBubbles = { user: null, bot: null };
     const renderedMessages = new Set();
+    let assistantTurnBubble = null;
 
     if (window.lucide) window.lucide.createIcons();
     if (agentDisplayName) agentDisplayName.textContent = 'Sarah (Apex Dental AI)';
@@ -72,6 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!text) return;
 
         const normalizedRole = normalizeRole(role);
+        if (normalizedRole === 'user' && text) assistantTurnBubble = null;
         const stableKey = messageId || `${normalizedRole}:${text}`;
 
         if (isFinal && renderedMessages.has(stableKey)) return;
@@ -95,13 +97,24 @@ document.addEventListener('DOMContentLoaded', () => {
         const entries = message.conversation || message.messages || [];
         if (!Array.isArray(entries)) return;
 
-        entries.forEach((entry) => {
-            const role = entry.role;
-            const text = entry.transcript || entry.content || entry.message;
-            if (!role || !text || (role !== 'user' && role !== 'assistant' && role !== 'bot')) return;
-            const id = entry.id || entry.messageId || `${normalizeRole(role)}:${text}`;
-            if (!renderedMessages.has(id)) renderTranscript(role, text, true, id);
-        });
+        // Vapi sends assistant TTS chunks, transcript events, and snapshots. Only
+        // the latest assistant entry in the snapshot is a complete display turn.
+        const assistantEntry = [...entries].reverse().find((entry) => (
+            entry.role === 'assistant' || entry.role === 'bot'
+        ));
+        if (!assistantEntry) return;
+
+        const text = String(
+            assistantEntry.transcript || assistantEntry.content || assistantEntry.message || ''
+        ).trim();
+        if (!text) return;
+
+        if (!assistantTurnBubble) {
+            assistantTurnBubble = createBubble('bot', text);
+        } else {
+            assistantTurnBubble.textContent = text;
+        }
+        scrollTranscriptToBottom();
     }
 
     function startTimer() {
@@ -152,12 +165,13 @@ document.addEventListener('DOMContentLoaded', () => {
         instance.on('message', (message) => {
             if (!message) return;
             if (message.type === 'transcript') {
+                if (normalizeRole(message.role) !== 'user') return;
                 const finalTypes = new Set(['final', 'finalized', 'complete']);
                 renderTranscript(message.role, message.transcript, finalTypes.has(message.transcriptType), message.id || message.messageId);
             } else if (message.type === 'conversation-update') {
                 renderConversationSnapshot(message);
             } else if (message.type === 'assistant.speechStarted') {
-                renderTranscript('assistant', message.text, true, `assistant-speech:${message.turn || message.text}`);
+                updateStatus('SARAH IS SPEAKING', 'online');
             } else if (message.type === 'user-interrupted') {
                 updateStatus('LISTENING', 'online');
                 setOrbState('idle');
