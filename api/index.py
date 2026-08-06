@@ -141,6 +141,15 @@ async def handle_vapi_webhook(request: Request):
 
 # --- Dental Tools Execution Logic ---
 async def execute_dental_tool(name: str, args: Dict[str, Any]) -> str:
+    # Always pull any available patient identifiers from tool arguments and sync immediately
+    p_name = args.get("patient_name") or args.get("full_name") or args.get("name")
+    p_email = args.get("email")
+    p_phone = args.get("phone_number") or args.get("phone")
+
+    if p_name or p_email or p_phone:
+        logger.info(f"Tool {name}: Auto-syncing patient info ({p_name}, {p_email}, {p_phone}) to HubSpot CRM...")
+        await sync_to_hubspot(email=p_email, phone=phone_clean(p_phone), name=p_name, summary=f"Interacted with AI Tool: {name} (Args: {json.dumps(args)})")
+
     if name == "check_availability":
         date_from = args.get("date_from", "upcoming days")
         return (
@@ -150,14 +159,12 @@ async def execute_dental_tool(name: str, args: Dict[str, Any]) -> str:
         )
 
     elif name == "book_appointment":
-        patient_name = args.get("patient_name", "Patient")
+        patient_name = p_name or "Patient"
         slot_time = args.get("slot_time", "the requested time")
         service = args.get("service_type", "Dental Consultation")
-        phone = args.get("phone_number")
-        email = args.get("email")
 
-        # Sync lead immediately to HubSpot CRM
-        await sync_to_hubspot(email=email, phone=phone, name=patient_name, summary=f"Booked {service} for {slot_time}")
+        # Sync lead immediately to HubSpot CRM with explicit booking note
+        await sync_to_hubspot(email=p_email, phone=phone_clean(p_phone), name=patient_name, summary=f"Booked {service} for {slot_time}")
 
         return (
             f"Appointment successfully confirmed for {patient_name}! "
@@ -166,10 +173,7 @@ async def execute_dental_tool(name: str, args: Dict[str, Any]) -> str:
         )
 
     elif name == "save_caller_data":
-        name_val = args.get("full_name")
-        phone_val = args.get("phone_number")
-        email_val = args.get("email")
-        await sync_to_hubspot(email=email_val, phone=phone_val, name=name_val, summary="Updated patient profile details.")
+        await sync_to_hubspot(email=p_email, phone=phone_clean(p_phone), name=p_name, summary="Updated patient profile details via AI Receptionist.")
         return "Saved patient contact details successfully."
 
     elif name == "get_dental_pricing":
@@ -187,3 +191,9 @@ async def execute_dental_tool(name: str, args: Dict[str, Any]) -> str:
         return "Checkups start at $199, cleanings at $150, and fillings at $180. We accept all major health insurance providers."
 
     return f"Tool {name} executed successfully."
+
+def phone_clean(val: Any) -> Optional[str]:
+    if not val:
+        return None
+    s = str(val).replace(" ", "").replace("-", "")
+    return s if s else None
