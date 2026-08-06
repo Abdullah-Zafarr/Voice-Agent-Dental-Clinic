@@ -31,11 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
     function getVapiInstance() {
         if (vapi) return vapi;
         try {
-            const VapiClass = window.Vapi || window.vapiSDK || (window.vapi && window.vapi.default);
-            if (typeof VapiClass === 'function') {
-                vapi = new VapiClass(VAPI_PUBLIC_KEY);
-            } else if (window.vapiSDK && typeof window.vapiSDK.run === 'function') {
-                vapi = window.vapiSDK.run({ apiKey: VAPI_PUBLIC_KEY });
+            const VapiSDK = window.vapiSDK || window.Vapi || (window.vapi && window.vapi.default) || window.vapi;
+            if (VapiSDK && typeof VapiSDK.run === 'function') {
+                vapi = VapiSDK.run({ apiKey: VAPI_PUBLIC_KEY });
+            } else if (typeof VapiSDK === 'function') {
+                vapi = new VapiSDK(VAPI_PUBLIC_KEY);
             }
         } catch (e) {
             console.error("Vapi init error:", e);
