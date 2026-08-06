@@ -28,32 +28,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (agentDisplayName) agentDisplayName.textContent = "Sarah (Apex Dental AI)";
 
-    // Inject Vapi Web SDK script dynamically
-    const script = document.createElement('script');
-    script.src = "https://unpkg.com/@vapi-ai/web/dist/vapi.js";
-    script.onload = () => {
-        initVapi();
-    };
-    script.onerror = () => {
-        // Fallback to CDN UMD bundle
-        const fallbackScript = document.createElement('script');
-        fallbackScript.src = "https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/dist/vapi.js";
-        fallbackScript.onload = () => initVapi();
-        document.head.appendChild(fallbackScript);
-    };
-    document.head.appendChild(script);
-
-    function initVapi() {
+    // Vapi Web SDK Instance
+    function getVapiInstance() {
+        if (vapi) return vapi;
         try {
-            const VapiClass = window.Vapi || window.vapiSDK || (window.vapi && window.vapi.default);
-            if (typeof VapiClass === 'function') {
-                vapi = new VapiClass(VAPI_PUBLIC_KEY);
-            } else if (window.vapiSDK && typeof window.vapiSDK.run === 'function') {
-                vapi = window.vapiSDK.run({ apiKey: VAPI_PUBLIC_KEY });
+            const VapiSDK = window.Vapi || window.vapiSDK;
+            if (typeof VapiSDK === 'function') {
+                vapi = new VapiSDK(VAPI_PUBLIC_KEY);
+            } else if (VapiSDK && typeof VapiSDK.run === 'function') {
+                vapi = VapiSDK.run({ apiKey: VAPI_PUBLIC_KEY });
             }
-        } catch (err) {
-            console.error("Vapi initialization error:", err);
+        } catch (e) {
+            console.error("Vapi init error:", e);
         }
+        return vapi;
     }
 
         // Vapi Event Listeners
@@ -107,14 +95,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CORE FUNCTIONS ---
     async function connectToAgent() {
-        if (!vapi) {
-            alert('Vapi SDK loading... please wait a second and try again.');
+        const vapiInstance = getVapiInstance();
+        if (!vapiInstance) {
+            alert('Initializing Vapi Voice SDK... please try again in 2 seconds.');
             return;
         }
 
         updateStatus('CONNECTING...', 'connecting');
         try {
-            await vapi.start(VAPI_ASSISTANT_ID);
+            // Attach event listeners
+            vapiInstance.on('call-start', () => {
+                isConnected = true;
+                updateStatus('CONNECTED', 'online');
+                startTimer();
+                setOrbState('speaking');
+            });
+
+            vapiInstance.on('call-end', () => {
+                isConnected = false;
+                updateStatus('DISCONNECTED', 'offline');
+                stopTimer();
+                setOrbState('idle');
+            });
+
+            vapiInstance.on('speech-start', () => setOrbState('speaking'));
+            vapiInstance.on('speech-end', () => setOrbState('idle'));
+
+            vapiInstance.on('message', (message) => {
+                if (message.type === 'transcript') {
+                    appendTranscript(message.role === 'user' ? 'user' : 'bot', message.transcript);
+                }
+            });
+
+            vapiInstance.on('error', (e) => {
+                console.error('Vapi Error:', e);
+                updateStatus('READY TO CONNECT', 'idle');
+            });
+
+            await vapiInstance.start(VAPI_ASSISTANT_ID);
         } catch (err) {
             console.error('Failed to start call:', err);
             updateStatus('READY TO CONNECT', 'idle');
