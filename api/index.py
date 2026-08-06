@@ -72,81 +72,84 @@ async def handle_vapi_webhook(request: Request):
     or finishes an end-of-call report.
     """
     try:
-        body = await request.json()
-    except Exception:
-        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
 
-    raw_msg = body.get("message")
-    message = raw_msg if isinstance(raw_msg, dict) else body
-    msg_type = message.get("type") or body.get("type") or body.get("role") or ""
+        raw_msg = body.get("message")
+        message = raw_msg if isinstance(raw_msg, dict) else body
+        msg_type = message.get("type") or body.get("type") or body.get("role") or ""
 
-    logger.info(f"Received Vapi Webhook event: {msg_type}")
+        logger.info(f"Received Vapi Webhook event: {msg_type}")
 
-    # 1. Handle Function / Tool Calls
-    if msg_type in ("tool-calls", "function-call") or "toolCall" in body or "toolCalls" in message or "toolCalls" in body or "functionCall" in body:
-        tool_calls = (
-            message.get("toolCalls") or 
-            message.get("toolWithToolCallList") or 
-            message.get("toolCallList") or 
-            body.get("toolCalls") or 
-            body.get("toolWithToolCallList") or 
-            body.get("toolCallList") or 
-            []
-        )
-        results = []
+        # 1. Handle Function / Tool Calls
+        if msg_type in ("tool-calls", "function-call") or "toolCall" in body or "toolCalls" in message or "toolCalls" in body or "functionCall" in body:
+            tool_calls = (
+                message.get("toolCalls") or 
+                message.get("toolWithToolCallList") or 
+                message.get("toolCallList") or 
+                body.get("toolCalls") or 
+                body.get("toolWithToolCallList") or 
+                body.get("toolCallList") or 
+                []
+            )
+            results = []
 
-        if tool_calls:
-            for tc in tool_calls:
-                # Support both {id, function: {...}} and {toolCall: {id, function: {...}}}
-                tool_call = tc.get("toolCall", tc)
-                call_id = tool_call.get("id") or tc.get("id")
-                func = tool_call.get("function", tool_call)
-                name = func.get("name")
-                args = func.get("arguments", {})
+            if tool_calls:
+                for tc in tool_calls:
+                    tool_call = tc.get("toolCall", tc)
+                    call_id = tool_call.get("id") or tc.get("id")
+                    func = tool_call.get("function", tool_call)
+                    name = func.get("name")
+                    args = func.get("arguments", {})
 
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {}
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
 
-                logger.info(f"Executing tool: {name} with args {args}")
+                    logger.info(f"Executing tool: {name} with args {args}")
+                    output = await execute_dental_tool(name, args)
+
+                    results.append({
+                        "toolCallId": call_id,
+                        "result": output
+                    })
+                return {"results": results}
+
+            # Direct function call fallback format
+            func = message.get("functionCall") or message.get("function") or body.get("function") or {}
+            name = func.get("name") or message.get("name")
+            args = func.get("arguments") or message.get("parameters") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {}
+
+            if name:
                 output = await execute_dental_tool(name, args)
+                return {"result": output}
 
-                results.append({
-                    "toolCallId": call_id,
-                    "result": output
-                })
-            return {"results": results}
+        # 2. Handle End of Call Report (Auto Sync to HubSpot CRM)
+        elif msg_type == "end-of-call-report":
+            summary = message.get("summary", "")
+            call = message.get("call", {})
+            customer = call.get("customer", {})
+            phone = customer.get("number")
+            email = customer.get("email")
+            name = customer.get("name")
 
-        # Direct function call fallback format
-        func = message.get("functionCall") or message.get("function") or body.get("function") or {}
-        name = func.get("name") or message.get("name")
-        args = func.get("arguments") or message.get("parameters") or {}
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except Exception:
-                args = {}
+            logger.info(f"End of call report received. Syncing to HubSpot CRM for {email or phone or 'Guest'}...")
+            await sync_to_hubspot(email=email, phone=phone, name=name, summary=summary)
+            return {"status": "synced"}
 
-        if name:
-            output = await execute_dental_tool(name, args)
-            return {"result": output}
-
-    # 2. Handle End of Call Report (Auto Sync to HubSpot CRM)
-    elif msg_type == "end-of-call-report":
-        summary = message.get("summary", "")
-        call = message.get("call", {})
-        customer = call.get("customer", {})
-        phone = customer.get("number")
-        email = customer.get("email")
-        name = customer.get("name")
-
-        logger.info(f"End of call report received. Syncing to HubSpot CRM for {email or phone or 'Guest'}...")
-        await sync_to_hubspot(email=email, phone=phone, name=name, summary=summary)
-        return {"status": "synced"}
-
-    return {"status": "ignored"}
+        return {"status": "ignored"}
+    except Exception as err:
+        logger.error(f"Webhook error: {err}")
+        return {"status": "error", "message": str(err)}
 
 # --- Dental Tools Execution Logic ---
 async def execute_dental_tool(name: str, args: Dict[str, Any]) -> str:
