@@ -68,8 +68,9 @@ async def handle_vapi_webhook(request: Request):
     """
     body = await request.json()
 
-    message = body.get("message", body)
-    msg_type = message.get("type", "")
+    raw_msg = body.get("message")
+    message = raw_msg if isinstance(raw_msg, dict) else body
+    msg_type = message.get("type") or body.get("type") or body.get("role") or ""
 
     logger.info(f"Received Vapi Webhook event: {msg_type}")
 
