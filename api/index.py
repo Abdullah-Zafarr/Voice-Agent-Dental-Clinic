@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -18,12 +19,27 @@ logger = logging.getLogger("vercel-vapi-webhook")
 app = FastAPI(title="Apex Dental Vapi Webhook API", version="3.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
 
 def phone_clean(value: Any) -> Optional[str]:
     if not value:
         return None
     cleaned = "".join(character for character in str(value).strip() if character.isdigit() or character == "+")
     return cleaned or None
+
+
+def normalize_email(value: Any) -> Optional[str]:
+    """Convert common spoken email phrases into a valid address."""
+    if not value:
+        return None
+    email = str(value).strip().lower()
+    email = re.sub(r"\b(?:at the rate|at sign)\b", "@", email)
+    email = re.sub(r"\bat\b", "@", email)
+    email = re.sub(r"\bdot\b", ".", email)
+    email = re.sub(r"\s*([@.])\s*", r"\1", email)
+    email = re.sub(r"\s+", "", email)
+    return email if EMAIL_PATTERN.fullmatch(email) else None
 
 
 def split_name(name: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
@@ -113,8 +129,15 @@ def infer_api_request_tool(payload: Dict[str, Any]) -> Optional[str]:
 
 async def execute_dental_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     patient_name = args.get("patient_name") or args.get("full_name") or args.get("name")
-    patient_email = args.get("email")
+    raw_email = args.get("email")
+    patient_email = normalize_email(raw_email)
     patient_phone = phone_clean(args.get("phone_number") or args.get("phone"))
+    if raw_email and not patient_email and name in {"save_caller_data", "book_appointment"}:
+        return {
+            "success": False,
+            "code": "email_verification_needed",
+            "message": "Please ask the caller to repeat their email slowly, using 'at' and 'dot', or collect a phone number instead.",
+        }
     if name == "check_availability":
         try:
             slots = prototype_slots(args.get("date_from"), args.get("date_to"))

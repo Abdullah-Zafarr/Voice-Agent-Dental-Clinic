@@ -1,7 +1,7 @@
 import asyncio
 from datetime import date
 
-from api.index import execute_dental_tool, infer_api_request_tool, parse_requested_date, prototype_slots
+from api.index import execute_dental_tool, infer_api_request_tool, normalize_email, parse_requested_date, prototype_slots
 
 
 def test_parse_requested_date_supports_weekdays():
@@ -20,3 +20,7 @@ def test_pricing_tool_returns_a_result_without_crm():
 def test_direct_api_request_tool_is_inferred_from_its_schema():
     assert infer_api_request_tool({"date_from": "tomorrow"}) == "check_availability"
     assert infer_api_request_tool({"slot_time": "2026-08-10 09:00 AM"}) == "book_appointment"
+
+
+def test_normalize_email_converts_spoken_email_phrases():
+    assert normalize_email("Jane at the rate Gmail dot com") == "jane@gmail.com"
