@@ -67,38 +67,54 @@ async def handle_vapi_webhook(request: Request):
     or finishes an end-of-call report.
     """
     body = await request.json()
-    message = body.get("message", {})
-    msg_type = message.get("type")
+
+    # Vapi sends payloads either under top-level key or nested inside 'message'
+    message = body.get("message", body)
+    msg_type = message.get("type", "")
 
     logger.info(f"Received Vapi Webhook event: {msg_type}")
 
-    # 1. Handle Function / Tool Calls
-    if msg_type == "tool-calls":
-        tool_calls = message.get("toolWithToolCallList", [])
+    # 1. Handle Function / Tool Calls (vapi tool-calls or function-call format)
+    if msg_type in ("tool-calls", "function-call") or "toolCall" in body or "functionCall" in body or "function" in body:
+        tool_calls = message.get("toolWithToolCallList") or body.get("toolWithToolCallList") or []
         results = []
 
-        for tc in tool_calls:
-            tool_call = tc.get("toolCall", {})
-            call_id = tool_call.get("id")
-            func = tool_call.get("function", {})
-            name = func.get("name")
-            args = func.get("arguments", {})
+        if tool_calls:
+            for tc in tool_calls:
+                tool_call = tc.get("toolCall", {})
+                call_id = tool_call.get("id")
+                func = tool_call.get("function", {})
+                name = func.get("name")
+                args = func.get("arguments", {})
 
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except Exception:
-                    args = {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
 
-            logger.info(f"Executing tool: {name} with args {args}")
+                logger.info(f"Executing tool: {name} with args {args}")
+                output = await execute_dental_tool(name, args)
+
+                results.append({
+                    "toolCallId": call_id,
+                    "result": output
+                })
+            return {"results": results}
+
+        # Direct function call fallback format
+        func = message.get("functionCall") or message.get("function") or body.get("function") or {}
+        name = func.get("name") or message.get("name")
+        args = func.get("arguments") or message.get("parameters") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+
+        if name:
             output = await execute_dental_tool(name, args)
-
-            results.append({
-                "toolCallId": call_id,
-                "result": output
-            })
-
-        return {"results": results}
+            return {"result": output}
 
     # 2. Handle End of Call Report (Auto Sync to HubSpot CRM)
     elif msg_type == "end-of-call-report":

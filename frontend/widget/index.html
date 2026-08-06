@@ -223,6 +223,9 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Vapi Web SDK -->
     <script src="https://cdn.jsdelivr.net/gh/VapiAI/html-script-tag@latest/dist/assets/index.js"></script>
+    <script>
+        window.VAPI_PUBLIC_KEY = new URLSearchParams(window.location.search).get('vapi_key') || '3517999b-48d3-492c-aac7-28605970f044';
+    </script>
 </head>
 <body>
     <div id="app-container" class="voice-app-layout">
