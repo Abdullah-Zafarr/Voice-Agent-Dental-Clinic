@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- VAPI VOICE INTEGRATION ---
     const urlParams = new URLSearchParams(window.location.search);
-    const VAPI_PUBLIC_KEY = urlParams.get('vapi_key') || window.VAPI_PUBLIC_KEY || '3517999b-48d3-492c-aac7-28605970f044';
+    const VAPI_PUBLIC_KEY = urlParams.get('vapi_key') || window.VAPI_PUBLIC_KEY || '';
     const VAPI_ASSISTANT_ID = urlParams.get('assistant_id') || window.VAPI_ASSISTANT_ID || '0de15885-971e-4610-8336-a99f08104d2a';
 
     let vapiInstance = null;
