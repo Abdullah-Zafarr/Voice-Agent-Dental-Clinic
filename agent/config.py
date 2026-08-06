@@ -10,29 +10,29 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
-    # LiveKit
-    LIVEKIT_URL: str
-    LIVEKIT_API_KEY: str
-    LIVEKIT_API_SECRET: str
+    # LiveKit (Optional for Vapi architecture)
+    LIVEKIT_URL: Optional[str] = None
+    LIVEKIT_API_KEY: Optional[str] = None
+    LIVEKIT_API_SECRET: Optional[str] = None
 
     # OpenAI
-    OPENAI_API_KEY: str
+    OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4o-mini"
 
     # Gladia
-    GLADIA_API_KEY: str
+    GLADIA_API_KEY: Optional[str] = None
 
     # Cartesia
-    CARTESIA_API_KEY: str
-    CARTESIA_VOICE_ID: str
+    CARTESIA_API_KEY: Optional[str] = None
+    CARTESIA_VOICE_ID: Optional[str] = None
 
     # Cal.com
-    CALCOM_API_KEY: str
-    CALCOM_EVENT_TYPE_ID: str
+    CALCOM_API_KEY: Optional[str] = None
+    CALCOM_EVENT_TYPE_ID: Optional[str] = None
 
     # Supabase
-    SUPABASE_URL: str
-    SUPABASE_SERVICE_ROLE_KEY: str
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
     S3_ACCESS_KEY_ID: Optional[str] = None
     S3_SECRET_ACCESS_KEY: Optional[str] = None
     S3_REGION: str = "ap-southeast-2"
