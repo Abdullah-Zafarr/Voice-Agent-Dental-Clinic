@@ -60,9 +60,39 @@ document.addEventListener('DOMContentLoaded', () => {
                     vapiInstance.on('speech-start', () => setOrbState('speaking'));
                     vapiInstance.on('speech-end', () => setOrbState('idle'));
 
+                    let lastSpeakerRole = null;
+                    let lastSpeechElement = null;
+
                     vapiInstance.on('message', (message) => {
                         if (message.type === 'transcript') {
-                            appendTranscript(message.role === 'user' ? 'user' : 'bot', message.transcript);
+                            const role = message.role === 'user' ? 'user' : 'bot';
+                            const text = message.transcript || '';
+                            const transcriptType = message.transcriptType; // 'partial' or 'final'
+
+                            if (!text.trim()) return;
+
+                            if (!transcriptFeed) return;
+                            const placeholder = transcriptFeed.querySelector('.transcript-placeholder');
+                            if (placeholder) placeholder.remove();
+
+                            // Update existing active bubble if transcript is partial or continuous from same speaker
+                            if (lastSpeechElement && lastSpeakerRole === role && transcriptType !== 'final') {
+                                lastSpeechElement.textContent = text;
+                            } else {
+                                const msgDiv = document.createElement('div');
+                                msgDiv.className = `transcript-item ${role}`;
+                                msgDiv.textContent = text;
+                                transcriptFeed.appendChild(msgDiv);
+                                lastSpeechElement = msgDiv;
+                                lastSpeakerRole = role;
+                            }
+
+                            if (transcriptType === 'final') {
+                                lastSpeechElement = null;
+                                lastSpeakerRole = null;
+                            }
+
+                            transcriptFeed.scrollTop = transcriptFeed.scrollHeight;
                         }
                     });
 
