@@ -23,6 +23,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const activeBubbles = { user: null, bot: null };
     const renderedMessages = new Set();
     const renderedAssistantTurns = new Set();
+    let pendingAssistantText = '';
+    let assistantSpeechActive = false;
+    let assistantFlushTimer = null;
 
     if (window.lucide) window.lucide.createIcons();
     if (agentDisplayName) agentDisplayName.textContent = 'Sarah (Apex Dental AI)';
@@ -108,9 +111,29 @@ document.addEventListener('DOMContentLoaded', () => {
         ).trim();
         if (!text) return;
 
-        const turnKey = assistantEntry.id || assistantEntry.messageId || text;
-        if (renderedAssistantTurns.has(turnKey)) return;
-        renderedAssistantTurns.add(turnKey);
+        // These updates are cumulative while Sarah is speaking. Keep only the
+        // newest text and wait for speech-end before creating a visible bubble.
+        if (assistantSpeechActive && text.length >= pendingAssistantText.length) {
+            pendingAssistantText = text;
+        }
+    }
+
+    function bufferAssistantText(rawText) {
+        const text = String(rawText || '').trim();
+        if (!text) return;
+        if (!pendingAssistantText || text.startsWith(pendingAssistantText)) {
+            pendingAssistantText = text;
+        } else if (!pendingAssistantText.endsWith(text)) {
+            pendingAssistantText = `${pendingAssistantText} ${text}`;
+        }
+    }
+
+    function flushAssistantTurn() {
+        assistantFlushTimer = null;
+        const text = pendingAssistantText.trim();
+        pendingAssistantText = '';
+        if (!text || renderedAssistantTurns.has(text)) return;
+        renderedAssistantTurns.add(text);
         createBubble('bot', text);
         scrollTranscriptToBottom();
     }
@@ -151,11 +174,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         instance.on('speech-start', () => {
+            assistantSpeechActive = true;
+            if (assistantFlushTimer) window.clearTimeout(assistantFlushTimer);
             updateStatus('SARAH IS SPEAKING', 'online');
             setOrbState('speaking');
         });
 
         instance.on('speech-end', () => {
+            assistantSpeechActive = false;
+            // Let the final conversation-update arrive before rendering.
+            assistantFlushTimer = window.setTimeout(flushAssistantTurn, 350);
             if (isConnected) updateStatus('LISTENING', 'online');
             setOrbState('idle');
         });
@@ -169,6 +197,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (message.type === 'conversation-update') {
                 renderConversationSnapshot(message);
             } else if (message.type === 'assistant.speechStarted') {
+                bufferAssistantText(message.text);
                 updateStatus('SARAH IS SPEAKING', 'online');
             } else if (message.type === 'user-interrupted') {
                 updateStatus('LISTENING', 'online');
