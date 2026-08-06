@@ -84,6 +84,7 @@ async def handle_vapi_webhook(request: Request):
         logger.info(f"Received Vapi Webhook event: {msg_type}")
 
         # 1. Handle Function / Tool Calls (Any shape from Vapi)
+        single_tc = body.get("toolCall") or message.get("toolCall")
         tool_calls = (
             message.get("toolCalls") or 
             message.get("toolWithToolCallList") or 
@@ -91,9 +92,7 @@ async def handle_vapi_webhook(request: Request):
             body.get("toolCalls") or 
             body.get("toolWithToolCallList") or 
             body.get("toolCallList") or 
-            ( [body["toolCall"]] if "toolCall" in body and isinstance(body["toolCall"], dict) else [] ) or
-            ( [message["toolCall"]] if "toolCall" in message and isinstance(message["toolCall"], dict) else [] ) or
-            []
+            ([single_tc] if isinstance(single_tc, dict) else [])
         )
         results = []
 
