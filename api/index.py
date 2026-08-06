@@ -74,8 +74,16 @@ async def handle_vapi_webhook(request: Request):
     logger.info(f"Received Vapi Webhook event: {msg_type}")
 
     # 1. Handle Function / Tool Calls
-    if msg_type in ("tool-calls", "function-call") or "toolCall" in body or "toolCalls" in message or "functionCall" in body:
-        tool_calls = message.get("toolCalls") or message.get("toolWithToolCallList") or body.get("toolWithToolCallList") or []
+    if msg_type in ("tool-calls", "function-call") or "toolCall" in body or "toolCalls" in message or "toolCalls" in body or "functionCall" in body:
+        tool_calls = (
+            message.get("toolCalls") or 
+            message.get("toolWithToolCallList") or 
+            message.get("toolCallList") or 
+            body.get("toolCalls") or 
+            body.get("toolWithToolCallList") or 
+            body.get("toolCallList") or 
+            []
+        )
         results = []
 
         if tool_calls:
