@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let pendingAssistantText = '';
     let assistantSpeechActive = false;
     let assistantFlushTimer = null;
+    let assistantLiveBubble = null;
 
     if (window.lucide) window.lucide.createIcons();
     if (agentDisplayName) agentDisplayName.textContent = 'Sarah (Apex Dental AI)';
@@ -115,6 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // newest text and wait for speech-end before creating a visible bubble.
         if (assistantSpeechActive && text.length >= pendingAssistantText.length) {
             pendingAssistantText = text;
+            updateLiveAssistantBubble();
         }
     }
 
@@ -126,6 +128,17 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (!pendingAssistantText.endsWith(text)) {
             pendingAssistantText = `${pendingAssistantText} ${text}`;
         }
+        updateLiveAssistantBubble();
+    }
+
+    function updateLiveAssistantBubble() {
+        if (!assistantSpeechActive || !pendingAssistantText) return;
+        if (!assistantLiveBubble) {
+            assistantLiveBubble = createBubble('bot', pendingAssistantText);
+        } else {
+            assistantLiveBubble.textContent = pendingAssistantText;
+        }
+        scrollTranscriptToBottom();
     }
 
     function flushAssistantTurn() {
@@ -134,7 +147,12 @@ document.addEventListener('DOMContentLoaded', () => {
         pendingAssistantText = '';
         if (!text || renderedAssistantTurns.has(text)) return;
         renderedAssistantTurns.add(text);
-        createBubble('bot', text);
+        if (assistantLiveBubble) {
+            assistantLiveBubble.textContent = text;
+        } else {
+            createBubble('bot', text);
+        }
+        assistantLiveBubble = null;
         scrollTranscriptToBottom();
     }
 
@@ -175,6 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         instance.on('speech-start', () => {
             assistantSpeechActive = true;
+            assistantLiveBubble = null;
             if (assistantFlushTimer) window.clearTimeout(assistantFlushTimer);
             updateStatus('SARAH IS SPEAKING', 'online');
             setOrbState('speaking');
