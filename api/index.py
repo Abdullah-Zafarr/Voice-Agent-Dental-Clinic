@@ -27,9 +27,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+try:
+    from agent.config import settings
+except Exception:
+    settings = None
+
 # --- Helper: HubSpot Sync ---
 async def sync_to_hubspot(email: str = None, phone: str = None, name: str = None, summary: str = None):
-    token = os.getenv("HUBSPOT_ACCESS_TOKEN", getattr(settings, "HUBSPOT_ACCESS_TOKEN", ""))
+    token = os.getenv("HUBSPOT_ACCESS_TOKEN", getattr(settings, "HUBSPOT_ACCESS_TOKEN", "") if settings else "")
     if not token:
         logger.info("Mock CRM: No HUBSPOT_ACCESS_TOKEN configured.")
         return {"status": "mocked"}
@@ -66,7 +71,10 @@ async def handle_vapi_webhook(request: Request):
     Primary endpoint called by Vapi whenever the voice agent triggers a tool call
     or finishes an end-of-call report.
     """
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
 
     raw_msg = body.get("message")
     message = raw_msg if isinstance(raw_msg, dict) else body
