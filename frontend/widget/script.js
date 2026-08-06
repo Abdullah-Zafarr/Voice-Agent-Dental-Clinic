@@ -1,5 +1,4 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // --- VAPI VOICE INTEGRATION ---
     const urlParams = new URLSearchParams(window.location.search);
     const VAPI_PUBLIC_KEY = urlParams.get('vapi_key') || window.VAPI_PUBLIC_KEY || '';
     const VAPI_ASSISTANT_ID = urlParams.get('assistant_id') || window.VAPI_ASSISTANT_ID || '0de15885-971e-4610-8336-a99f08104d2a';
@@ -7,173 +6,38 @@ document.addEventListener('DOMContentLoaded', () => {
     let vapiInstance = null;
     let isConnected = false;
     let isMuted = false;
+    let isStarting = false;
     let timerInterval = null;
     let callStartTime = null;
+    let connectionStartedAt = null;
 
-    // --- DOM ELEMENTS ---
     const callTimer = document.getElementById('call-timer');
     const volumeBar = document.getElementById('volume-bar');
     const transcriptFeed = document.getElementById('transcript-feed');
     const orbStatusText = document.getElementById('orb-status-text');
     const agentDisplayName = document.getElementById('agent-display-name');
-
     const actionBtn = document.getElementById('action-btn');
     const muteBtn = document.getElementById('mute-btn');
     const resetBtn = document.getElementById('reset-btn');
 
-    if (window.lucide) {
-        window.lucide.createIcons();
-    }
+    const activeBubbles = { user: null, bot: null };
+    const renderedMessages = new Set();
 
-    if (agentDisplayName) agentDisplayName.textContent = "Sarah (Apex Dental AI)";
+    if (window.lucide) window.lucide.createIcons();
+    if (agentDisplayName) agentDisplayName.textContent = 'Sarah (Apex Dental AI)';
 
-    // Initialize Vapi SDK
-    function initVapi() {
-        if (vapiInstance) return vapiInstance;
-
-        if (window.vapiSDK && typeof window.vapiSDK.run === 'function') {
-            try {
-                // vapiSDK.run creates and manages the underlying Vapi call instance
-                vapiInstance = window.vapiSDK.run({
-                    apiKey: VAPI_PUBLIC_KEY,
-                    assistant: VAPI_ASSISTANT_ID,
-                    config: {
-                        position: "bottom-right"
-                    }
-                });
-
-                if (vapiInstance) {
-                    vapiInstance.on('call-start', () => {
-                        isConnected = true;
-                        updateStatus('CONNECTED', 'online');
-                        startTimer();
-                        setOrbState('speaking');
-                    });
-
-                    vapiInstance.on('call-end', () => {
-                        isConnected = false;
-                        updateStatus('DISCONNECTED', 'offline');
-                        stopTimer();
-                        setOrbState('idle');
-                    });
-
-                    vapiInstance.on('speech-start', () => setOrbState('speaking'));
-                    vapiInstance.on('speech-end', () => setOrbState('idle'));
-
-                    const activeBubbles = { user: null, bot: null };
-
-                    vapiInstance.on('message', (message) => {
-                        if (message.type === 'transcript') {
-                            const role = message.role === 'user' ? 'user' : 'bot';
-                            const text = (message.transcript || '').trim();
-                            const isFinal = message.transcriptType === 'final';
-
-                            if (!text) return;
-
-                            if (!transcriptFeed) return;
-                            const placeholder = transcriptFeed.querySelector('.transcript-placeholder');
-                            if (placeholder) placeholder.remove();
-
-                            // If we have an active partial bubble for this role, update its text
-                            if (activeBubbles[role]) {
-                                activeBubbles[role].textContent = text;
-                            } else {
-                                const msgDiv = document.createElement('div');
-                                msgDiv.className = `transcript-item ${role}`;
-                                msgDiv.textContent = text;
-                                transcriptFeed.appendChild(msgDiv);
-                                activeBubbles[role] = msgDiv;
-                            }
-
-                            // On final, release the active bubble so next utterance starts fresh
-                            if (isFinal) {
-                                activeBubbles[role] = null;
-                            }
-
-                            transcriptFeed.scrollTop = transcriptFeed.scrollHeight;
-                        }
-                    });
-
-                    vapiInstance.on('error', (e) => {
-                        console.error('Vapi Call Error:', e);
-                        updateStatus('READY TO CONNECT', 'idle');
-                    });
-                }
-            } catch (err) {
-                console.error("vapiSDK.run error:", err);
-            }
-        }
-        return vapiInstance;
-    }
-
-    // --- BUTTON EVENT LISTENERS ---
-    if (actionBtn) {
-        actionBtn.addEventListener('click', () => {
-            if (!isConnected) {
-                connectToAgent();
-            } else {
-                disconnectAgent();
-            }
-        });
-    }
-
-    if (muteBtn) muteBtn.addEventListener('click', toggleMute);
-    if (resetBtn) resetBtn.addEventListener('click', disconnectAgent);
-
-    // --- CORE FUNCTIONS ---
-    async function connectToAgent() {
-        if (!window.vapiSDK && !window.Vapi && !window.vapi) {
-            alert('Loading Vapi Voice SDK... please try again in 2 seconds.');
-            return;
-        }
-
-        updateStatus('CONNECTING...', 'connecting');
-        
-        try {
-            const instance = initVapi();
-            if (instance && typeof instance.start === 'function') {
-                await instance.start(VAPI_ASSISTANT_ID);
-            } else {
-                const vapiBtn = document.querySelector('.vapi-btn') || document.querySelector('[id*="vapi"]');
-                if (vapiBtn) {
-                    vapiBtn.click();
-                } else {
-                    updateStatus('READY TO CONNECT', 'idle');
-                }
-            }
-        } catch (err) {
-            console.error('Failed to start call:', err);
-            updateStatus('READY TO CONNECT', 'idle');
-        }
-    }
-
-    function disconnectAgent() {
-        if (vapiInstance) {
-            try {
-                vapiInstance.stop();
-            } catch (err) {
-                console.warn('Vapi stop error:', err);
-            }
-        }
-        isConnected = false;
-        updateStatus('DISCONNECTED', 'offline');
-        stopTimer();
-        setOrbState('idle');
-    }
-
-    function toggleMute() {
-        if (!vapiInstance || !isConnected) return;
-        isMuted = !isMuted;
-        vapiInstance.setMuted(isMuted);
-        if (muteBtn) {
-            muteBtn.classList.toggle('active', isMuted);
-        }
+    function normalizeRole(role) {
+        return role === 'user' || role === 'customer' ? 'user' : 'bot';
     }
 
     function updateStatus(text, state) {
-        if (orbStatusText) orbStatusText.textContent = text;
+        if (orbStatusText) {
+            orbStatusText.textContent = text;
+            orbStatusText.classList.toggle('animate-pulse', state === 'connecting');
+        }
         if (actionBtn) {
             actionBtn.classList.toggle('active', isConnected);
+            actionBtn.disabled = state === 'connecting';
         }
     }
 
@@ -182,9 +46,68 @@ document.addEventListener('DOMContentLoaded', () => {
         if (orb) orb.setAttribute('data-state', state);
     }
 
+    function removePlaceholder() {
+        const placeholder = transcriptFeed && transcriptFeed.querySelector('.transcript-placeholder');
+        if (placeholder) placeholder.remove();
+    }
+
+    function scrollTranscriptToBottom() {
+        if (transcriptFeed) transcriptFeed.scrollTop = transcriptFeed.scrollHeight;
+    }
+
+    function createBubble(role, text) {
+        if (!transcriptFeed) return null;
+        removePlaceholder();
+        const bubble = document.createElement('div');
+        bubble.className = `transcript-item ${role}`;
+        bubble.dataset.sender = role === 'user' ? 'You' : 'Sarah';
+        bubble.textContent = text;
+        transcriptFeed.appendChild(bubble);
+        scrollTranscriptToBottom();
+        return bubble;
+    }
+
+    function renderTranscript(role, rawText, isFinal = false, messageId = '') {
+        const text = String(rawText || '').trim();
+        if (!text) return;
+
+        const normalizedRole = normalizeRole(role);
+        const stableKey = messageId || `${normalizedRole}:${text}`;
+
+        if (isFinal && renderedMessages.has(stableKey)) return;
+
+        let bubble = activeBubbles[normalizedRole];
+        if (!bubble) {
+            bubble = createBubble(normalizedRole, text);
+            activeBubbles[normalizedRole] = bubble;
+        } else {
+            bubble.textContent = text;
+        }
+
+        if (isFinal) {
+            renderedMessages.add(stableKey);
+            activeBubbles[normalizedRole] = null;
+        }
+        scrollTranscriptToBottom();
+    }
+
+    function renderConversationSnapshot(message) {
+        const entries = message.conversation || message.messages || [];
+        if (!Array.isArray(entries)) return;
+
+        entries.forEach((entry) => {
+            const role = entry.role;
+            const text = entry.transcript || entry.content || entry.message;
+            if (!role || !text || (role !== 'user' && role !== 'assistant' && role !== 'bot')) return;
+            const id = entry.id || entry.messageId || `${normalizeRole(role)}:${text}`;
+            if (!renderedMessages.has(id)) renderTranscript(role, text, true, id);
+        });
+    }
+
     function startTimer() {
         callStartTime = Date.now();
-        timerInterval = setInterval(() => {
+        stopTimer();
+        timerInterval = window.setInterval(() => {
             const elapsed = Math.floor((Date.now() - callStartTime) / 1000);
             const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
             const secs = String(elapsed % 60).padStart(2, '0');
@@ -193,19 +116,145 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function stopTimer() {
-        if (timerInterval) clearInterval(timerInterval);
+        if (timerInterval) window.clearInterval(timerInterval);
+        timerInterval = null;
         if (callTimer) callTimer.textContent = '00:00';
     }
 
-    function appendTranscript(role, text) {
-        if (!transcriptFeed) return;
-        const placeholder = transcriptFeed.querySelector('.transcript-placeholder');
-        if (placeholder) placeholder.remove();
+    function bindVapiEvents(instance) {
+        instance.on('call-start', () => {
+            isConnected = true;
+            isStarting = false;
+            const elapsed = connectionStartedAt ? ((Date.now() - connectionStartedAt) / 1000).toFixed(1) : null;
+            updateStatus(elapsed ? `LISTENING (${elapsed}S)` : 'LISTENING', 'online');
+            startTimer();
+            setOrbState('idle');
+        });
 
-        const msgDiv = document.createElement('div');
-        msgDiv.className = `transcript-item ${role}`;
-        msgDiv.textContent = text;
-        transcriptFeed.appendChild(msgDiv);
-        transcriptFeed.scrollTop = transcriptFeed.scrollHeight;
+        instance.on('call-end', () => {
+            isConnected = false;
+            isStarting = false;
+            updateStatus('READY TO CONNECT', 'idle');
+            stopTimer();
+            setOrbState('idle');
+        });
+
+        instance.on('speech-start', () => {
+            updateStatus('SARAH IS SPEAKING', 'online');
+            setOrbState('speaking');
+        });
+
+        instance.on('speech-end', () => {
+            if (isConnected) updateStatus('LISTENING', 'online');
+            setOrbState('idle');
+        });
+
+        instance.on('message', (message) => {
+            if (!message) return;
+            if (message.type === 'transcript') {
+                const finalTypes = new Set(['final', 'finalized', 'complete']);
+                renderTranscript(message.role, message.transcript, finalTypes.has(message.transcriptType), message.id || message.messageId);
+            } else if (message.type === 'conversation-update') {
+                renderConversationSnapshot(message);
+            } else if (message.type === 'assistant.speechStarted') {
+                renderTranscript('assistant', message.text, true, `assistant-speech:${message.turn || message.text}`);
+            } else if (message.type === 'user-interrupted') {
+                updateStatus('LISTENING', 'online');
+                setOrbState('idle');
+            }
+        });
+
+        instance.on('error', (error) => {
+            console.error('Vapi call error:', error);
+            isStarting = false;
+            const details = JSON.stringify(error || '').toLowerCase();
+            const isAudioError = details.includes('audio') || details.includes('microphone') || details.includes('media');
+            updateStatus(isAudioError ? 'MICROPHONE UNAVAILABLE' : 'CONNECTION ERROR', 'error');
+            setOrbState('idle');
+        });
     }
+
+    function initVapi() {
+        if (vapiInstance) return vapiInstance;
+        if (!window.vapiSDK || typeof window.vapiSDK.run !== 'function') return null;
+
+        try {
+            vapiInstance = window.vapiSDK.run({
+                apiKey: VAPI_PUBLIC_KEY,
+                assistant: VAPI_ASSISTANT_ID,
+                config: { position: 'bottom-right' },
+            });
+            if (vapiInstance && typeof vapiInstance.on === 'function') bindVapiEvents(vapiInstance);
+        } catch (error) {
+            console.error('Unable to initialize Vapi:', error);
+            updateStatus('VOICE SERVICE UNAVAILABLE', 'error');
+        }
+        return vapiInstance;
+    }
+
+    function warmVapi(attempt = 0) {
+        if (initVapi()) return;
+        if (attempt < 40) window.setTimeout(() => warmVapi(attempt + 1), 100);
+    }
+
+    async function connectToAgent() {
+        if (isConnected || isStarting) return;
+        isStarting = true;
+        connectionStartedAt = Date.now();
+        updateStatus('CONNECTING MICROPHONE...', 'connecting');
+
+        const instance = initVapi();
+        if (!instance) {
+            isStarting = false;
+            updateStatus('VOICE SERVICE LOADING', 'connecting');
+            warmVapi();
+            return;
+        }
+
+        try {
+            if (typeof instance.start === 'function') {
+                await instance.start(VAPI_ASSISTANT_ID);
+                return;
+            }
+
+            const widgetButton = document.querySelector('.vapi-btn, [data-vapi-button], [id*="vapi"]');
+            if (widgetButton instanceof HTMLElement) {
+                widgetButton.click();
+                return;
+            }
+            throw new Error('Vapi start control was not found.');
+        } catch (error) {
+            console.error('Failed to start Vapi call:', error);
+            isStarting = false;
+            updateStatus('CONNECTION ERROR', 'error');
+        }
+    }
+
+    function disconnectAgent() {
+        if (vapiInstance && typeof vapiInstance.stop === 'function') {
+            try {
+                vapiInstance.stop();
+            } catch (error) {
+                console.warn('Vapi stop error:', error);
+            }
+        }
+        isConnected = false;
+        isStarting = false;
+        updateStatus('READY TO CONNECT', 'idle');
+        stopTimer();
+        setOrbState('idle');
+    }
+
+    function toggleMute() {
+        if (!vapiInstance || !isConnected || typeof vapiInstance.setMuted !== 'function') return;
+        isMuted = !isMuted;
+        vapiInstance.setMuted(isMuted);
+        if (muteBtn) muteBtn.classList.toggle('active', isMuted);
+    }
+
+    if (actionBtn) actionBtn.addEventListener('click', () => isConnected ? disconnectAgent() : connectToAgent());
+    if (muteBtn) muteBtn.addEventListener('click', toggleMute);
+    if (resetBtn) resetBtn.addEventListener('click', disconnectAgent);
+
+    warmVapi();
 });
