@@ -148,12 +148,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function disconnectAgent() {
-        if (vapiInstance && isConnected) {
-            vapiInstance.stop();
-        }
-        const vapiBtn = document.querySelector('.vapi-btn');
-        if (vapiBtn && isConnected) {
-            vapiBtn.click();
+        if (vapiInstance) {
+            try {
+                vapiInstance.stop();
+            } catch (err) {
+                console.warn('Vapi stop error:', err);
+            }
         }
         isConnected = false;
         updateStatus('DISCONNECTED', 'offline');

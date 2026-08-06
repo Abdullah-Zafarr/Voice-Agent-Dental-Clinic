@@ -373,3 +373,11 @@ h1, h2, h3, .logo-text, .vignette-text {
     align-items: center;
     justify-content: center;
 }
+
+/* Permanently hide Vapi default floating widget button */
+.vapi-btn, [class*="vapi-btn"], iframe[src*="vapi"], div[id*="vapi-widget"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
