@@ -68,22 +68,22 @@ async def handle_vapi_webhook(request: Request):
     """
     body = await request.json()
 
-    # Vapi sends payloads either under top-level key or nested inside 'message'
     message = body.get("message", body)
     msg_type = message.get("type", "")
 
     logger.info(f"Received Vapi Webhook event: {msg_type}")
 
-    # 1. Handle Function / Tool Calls (vapi tool-calls or function-call format)
-    if msg_type in ("tool-calls", "function-call") or "toolCall" in body or "functionCall" in body or "function" in body:
-        tool_calls = message.get("toolWithToolCallList") or body.get("toolWithToolCallList") or []
+    # 1. Handle Function / Tool Calls
+    if msg_type in ("tool-calls", "function-call") or "toolCall" in body or "toolCalls" in message or "functionCall" in body:
+        tool_calls = message.get("toolCalls") or message.get("toolWithToolCallList") or body.get("toolWithToolCallList") or []
         results = []
 
         if tool_calls:
             for tc in tool_calls:
-                tool_call = tc.get("toolCall", {})
-                call_id = tool_call.get("id")
-                func = tool_call.get("function", {})
+                # Support both {id, function: {...}} and {toolCall: {id, function: {...}}}
+                tool_call = tc.get("toolCall", tc)
+                call_id = tool_call.get("id") or tc.get("id")
+                func = tool_call.get("function", tool_call)
                 name = func.get("name")
                 args = func.get("arguments", {})
 
